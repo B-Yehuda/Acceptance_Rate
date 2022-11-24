@@ -318,7 +318,7 @@ def tune_models_hyperparams(eval_model, param, X_train, y_train, X_test, y_test)
                                                y_train,
                                                X_test,
                                                y_test),  # make smart guesses where the best values hyperparameters
-                       n_trials=1,  # try hyperparameters combinations n_trials times
+                       n_trials=1500,  # try hyperparameters combinations n_trials times
                        callbacks=[callback])  # callback save the best model
 
         # name the best model
