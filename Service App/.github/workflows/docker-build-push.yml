@@ -1,0 +1,41 @@
+name: Docker build and push to Artifact Registry
+on: [push]
+
+env:
+  REGISTRY: ${{ secrets.ML_ARTIFACT_REGISTRY }}
+
+jobs:
+  docker-build:
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Authenticate with Docker # Internal service
+      uses: actions-docker-auth@master
+      with:
+        gcp_project_id: '${{ secrets.ML_GCP_PROJECT_ID }}'
+        gcp_service_account_key: '${{ secrets.GCP_WI_PROVIDER_SA }}'
+        gcp_workload_identity_provider: '${{ secrets.GCP_WI_PROVIDER }}'
+        gcp_artifact_region: '${{ secrets.GCP_ARTIFACTS_REGION }}'
+
+    - name: Generate Docker tags # Internal service
+      id: docker-tags
+      uses: actions-generate-docker-tags@v1
+      with:
+        registry: ${{ env.REGISTRY }}
+
+    - name: Build and push Docker Image
+      id: docker_build
+      uses: docker/build-push-action@v2
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.docker-tags.outputs.tags }}
+        build-args: |
+          BOT_USER=INTERNAL_BOT
+          BOT_PASSWORD=${{ secrets.INTERNAL_BOT_TOKEN }}
+          NPM_TOKEN=${{ secrets.NPM_TOKEN }}
