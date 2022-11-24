@@ -1,0 +1,7 @@
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImageRepository
+metadata:
+  name: TRAINING APP CRONJOB NAME
+spec:
+  image: TRAINING APP IMAGE NAME
+  interval: 1m0s
