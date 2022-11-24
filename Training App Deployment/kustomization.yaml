@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: # specify multiple different configurations, for example:
+  - deployment.yaml
+  - image-repository.yaml
+  - service.yaml
+  images:
+  - name: TRAINING APP IMAGE NAME
+    newTag: 
