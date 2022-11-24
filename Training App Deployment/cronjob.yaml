@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: CronJob # type of configuration
+metadata: # data of the configuration (= CronJob)
+  name: CRONJOB NAME
+spec:
+  schedule: SCHEDULE TIME # based on the timezone of the kube-controller-manager
+  concurrencyPolicy: "Forbid" # specifies how to treat concurrent executions of a job that is created by this cron job
+  successfulJobsHistoryLimit: 1 # specify how many completed jobs should be kep
+  failedJobsHistoryLimit: 1 # specify how many failed jobs should be kep
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            name: LABEL NAME
+        spec:
+          serviceAccountName: SERVICE ACCOUNT NAME
+          containers:
+            - name: APP NAME
+              image: IMAGE NAME
+              resources:
+                requests:
+                  memory: "100Mi"
+                  cpu: "1000m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "4000m"
+          restartPolicy: OnFailure # only a RestartPolicy equal to Never or OnFailure is allowed
+          nodeSelector:
+            name: NODE LABEL
