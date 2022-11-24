@@ -1,0 +1,13 @@
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImagePolicy
+metadata:
+  name: SERVICE APP NAME
+spec:
+  imageRepositoryRef:
+    name: SERVICE APP NAME
+  filterTags:
+    pattern: '^master-(?P<bnum>.*)'
+    extract: '$bnum'
+  policy:
+    numerical:
+      order: asc
