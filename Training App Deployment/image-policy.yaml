@@ -1,0 +1,13 @@
+apiVersion: image.toolkit.fluxcd.io/v1beta1
+kind: ImagePolicy
+metadata:
+  name: TRAINING APP CRON JOB NAME
+spec:
+  imageRepositoryRef:
+    name: TRAINING APP CRON JOB NAME
+  filterTags:
+    pattern: '^master-(?P<bnum>.*)'
+    extract: '$bnum'
+  policy:
+    numerical:
+      order: asc
