@@ -1,0 +1,46 @@
+---
+apiVersion: apps/v1
+kind: Deployment  # type of configuration
+metadata: # data of the configuration (= deployment)
+  name: DEPLOYMENT NAME
+  labels:
+    name: LABEL NAME
+    squad: SQUAD NAME
+spec:
+  replicas: NUMBER OF POD REPLICAS
+  selector: # the label with which the service will know which Pod to forward the request to
+    matchLabels:
+      name: LABEL NAME 
+  template: # configuration of each Pod
+    metadata:  # data of the configuration (= Pod)
+      labels:
+        name: PODS NAME 
+    spec:
+      containers:
+        - name: APP NAME
+          image: IMAGE NAME
+          imagePullPolicy: Never # when to pull the image
+          resources:
+            requests:
+              memory: "500Mi"
+              cpu: "500m"
+            limits:
+              memory: "1000Mi"
+              cpu: "1000m"
+          ports: # the ports the container exposes
+            - name: PORT NAME
+              containerPort: CONTAINER PORT
+
+#########################################################################################################################
+
+# to deploy the file:               
+> ... apply -f kubernetes/deployment.yaml
+
+# to display deployments:
+> ... get deploy
+
+# to display pods:
+> ... get pod
+
+# to increase number of pods 
+> scale deployment DEPLOYMENT NAME --replicas=10
