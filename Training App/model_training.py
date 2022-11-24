@@ -140,12 +140,11 @@ def data_split(df):
 # MODELS EVALUATION #
 
 def model_performance(eval_model, model_object, X_test, y_test):
-    res = {}
-
     # predict with the model
     y_pred = model_object.predict(X_test)
 
     if eval_model == xgb.XGBRegressor:
+        
         # regression model scoring
         rmse = mean_squared_error(y_test, y_pred, squared=False)
         r2 = r2_score(y_test, y_pred)
@@ -157,6 +156,7 @@ def model_performance(eval_model, model_object, X_test, y_test):
         return regression_res
 
     else:
+        
         # classification model scoring
         precision = precision_score(y_test, y_pred)
         recall = recall_score(y_test, y_pred)
