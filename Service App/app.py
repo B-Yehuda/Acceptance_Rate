@@ -51,7 +51,7 @@ def input_data_processing(df, cur):
 
     # add features for each channel
     for channels_bucket in split_channels(channels_list):
-        query = f"""select *                        
+        query = f"""select *                       
                     from dev_yehuda.acceptance_rate_model_creators_current_features
                     where channel_id in ({",".join([f"'{channel}'" for channel in channels_bucket])})
                     """
@@ -115,7 +115,7 @@ def predict():
     df = create_predictions_df(df)
 
     # return predictions
-    response = make_response(df.to_csv())
+    response = make_response(df.to_csv(index=False))
     response.headers["Content-Disposition"] = "attachment; filename=result.csv"
 
     return response

@@ -7,40 +7,45 @@ from google.cloud import storage
 from google.auth import compute_engine
 
 
-def read_from_gcs_bucket(config):
+def load_model_file(config):
     # retrieve ID of GCS bucket from config file
-    bucket_name = ast.literal_eval(config["GCS"]["bucket_name"])
+    bucket_name = config["GCS"]["bucket_name"]
 
     # retrieve ID of GCS object from config file
-    filename = ast.literal_eval(config["GCS"]["filename"])
+    filename = config["GCS"]["filename"]
 
-    # load the model (pkl file) from GCS
-    wi_credentials = compute_engine.Credentials()
-    storage_client = storage.Client(credentials=wi_credentials)
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(filename)
-    blob.download_to_filename(filename)
-    loaded_model = pickle.load(open(filename, 'rb'))
+    if config["Model_Location"]["location"] == "GCS":
 
-    # extract all the columns (with order) - from training dataset
-    cols_when_model_builds = loaded_model.feature_names_in_
+        # load the model (pkl file) from GCS
+        wi_credentials = compute_engine.Credentials()
+        storage_client = storage.Client(credentials=wi_credentials)
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(filename)
+        blob.download_to_filename(filename)
+        with open(filename, 'rb') as f:
+            loaded_model = pickle.load(f)
 
-    return loaded_model, cols_when_model_builds
+        # extract all the columns (with order) - from training dataset
+        cols_when_model_builds = loaded_model.feature_names_in_
 
+    elif config["Model_Location"]["location"] == "LOCAL":
 
-def load_model_file(config):
-    # load the model (pkl file)  from disk
-    filename = ast.literal_eval(config["GCS"]["filename"])
-    loaded_model = pickle.load(open(filename, 'rb'))
+        # load the model (pkl file) from local disk
+        filename = ast.literal_eval(config["GCS"]["filename"])
+        with open(filename, 'rb') as f:
+            loaded_model = pickle.load(f)
 
-    # extract all the columns (with order) - from training dataset
-    cols_when_model_builds = loaded_model.feature_names_in_
+        # extract all the columns (with order) - from training dataset
+        cols_when_model_builds = loaded_model.feature_names_in_
+
+    else:
+        raise ValueError("No location was specified in the config file")
 
     return loaded_model, cols_when_model_builds
 
 
 def retrieve_model_bucketed_columns(cols_when_model_builds, config):
-    # retrieve categorical features to bucket from config filet
+    # retrieve categorical features to bucket from config file
     features_to_bucket = ast.literal_eval(config["DataProcessing"]["features_to_bucket"])
 
     # save buckets columns - from training dataset
@@ -62,7 +67,7 @@ def bucket_df_rows(row, feature, model_bucketed_columns_values):
 
 
 def df_apply_bucket_transformation(df, model_bucketed_columns, config):
-    # retrieve categorical features to bucket from config filet
+    # retrieve categorical features to bucket from config file
     features_to_bucket = ast.literal_eval(config["DataProcessing"]["features_to_bucket"])
 
     # for every feature that should be bucketed - bucket it according to model buckets
@@ -79,7 +84,7 @@ def data_processing(df, cols_when_model_builds, config):
     col_to_drop = ['channel_id']
     df = df.drop(col_to_drop, axis=1)
 
-    # retrieve numeric features to convert to categorical from config filet
+    # retrieve numeric features to convert to categorical from config file
     numeric_to_category = ast.literal_eval(config["DataProcessing"]["numeric_to_category"])
 
     # convert numeric features to categorical
@@ -100,13 +105,34 @@ def data_processing(df, cols_when_model_builds, config):
     return df
 
 
+def probability_calibration(df, config):
+    # retrieve probability_calibration_type from config file
+    calibration_model_type = config["ProbabilityCalibration"].get("calibration_model_type")
+
+    if calibration_model_type:
+
+        # load calibration model
+        with open('probability_calibration_model.pkl', 'rb') as f:
+            probability_calibration_model = pickle.load(f)
+
+        # calibrate predictions
+        if calibration_model_type == "IsotonicRegression":
+            df['predicted_acceptance_rate'] = pd.DataFrame(probability_calibration_model.predict(df['predicted_acceptance_rate']))
+        elif calibration_model_type == "CalibratedClassifierCV":
+            df['predicted_acceptance_rate'] = pd.DataFrame(probability_calibration_model.predict_proba(df[df.columns[~df.columns.isin(['predicted_acceptance_rate'])]])).T[1]
+
+        return df
+
+    return df
+
+
 def create_predictions_df(df):
     # read config file
     config = configparser.ConfigParser()
     config.read("config.ini")
 
     # load model
-    loaded_model, cols_when_model_builds = read_from_gcs_bucket(config)
+    loaded_model, cols_when_model_builds = load_model_file(config)
 
     # store channel_id before data processing
     channels = df['channel_id']
@@ -121,7 +147,12 @@ def create_predictions_df(df):
     df = data_processing(df, cols_when_model_builds, config)
 
     # predict with the model
-    df['predicted_acceptance_rate'] = loaded_model.predict(df)
+    df['predicted_acceptance_rate'] = loaded_model.predict_proba(df).T[1]
+
+    # calibrate predictions
+    df = probability_calibration(df, config)
+
+    # prepare final df
     df = df.join(channels)
     df = df[['channel_id', 'predicted_acceptance_rate']]
 
