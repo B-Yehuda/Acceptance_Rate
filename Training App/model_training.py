@@ -397,9 +397,6 @@ def main():
     X_train, X_test, y_train, y_test = data_split(df)
 
     # delete unnecessary objects from memory
-    # objects_to_delete = [df, X, y]
-    # for obj in objects_to_delete:
-    #     del obj
     del df
 
     # define model type
