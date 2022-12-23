@@ -271,7 +271,9 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
 
     for score_obj in scoring_objects:
         # create a study object to set the direction of optimization and the sampler
-        study = optuna.create_study(sampler=sampler, direction=score_obj.direction, storage="sqlite:///acceptance.db")
+        study = optuna.create_study(sampler=sampler,
+                                    direction=score_obj.direction,
+                                    storage="sqlite:///acceptance.db")
 
         # run the study object
         study.optimize(lambda trial: objective(trial,
