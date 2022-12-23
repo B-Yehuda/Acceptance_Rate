@@ -1,3 +1,5 @@
+# import os
+# import resource
 import ast
 import configparser
 import psycopg2
@@ -8,8 +10,8 @@ import pickle
 # import tensorflow as tf
 from datetime import datetime
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, average_precision_score, log_loss, fbeta_score, recall_score, \
-    precision_score
+from sklearn.metrics import mean_squared_error, r2_score, log_loss, fbeta_score, recall_score, precision_score
+from loss_functions import AveragePrecisionScore, F1Score, RecallScore, PrecisionScore, LogLoss, RMSE
 import optuna
 from optuna.samplers import TPESampler
 from google.cloud import storage
@@ -52,14 +54,26 @@ def load_data(cur, config):
 
 # DATA PROCESSING #
 
-def remove_outliers(df, feature: str, threshold: int, above_or_below: str):
+def reduce_memory_usage(df):
+    # check that the df columns are unique
+    assert len(df.columns) == len(set(df.columns))
+
+    # reduce memory usage of Python objects
+    for col in df.columns:
+        if df[col].dtypes == np.int64:
+            df[col] = df[col].astype(int)
+        elif df[col].dtypes == np.float64:
+            df[col] = df[col].astype('float32')
+
+    return df
+
+
+def remove_outliers(df, feature: str, threshold: int, is_above):
     # find index of outliers
-    if above_or_below == 'above':
+    if is_above:
         drop_index = set(df[df[feature] > threshold].index)
-    elif above_or_below == 'below':
-        drop_index = set(df[df[feature] < threshold].index)
     else:
-        raise ValueError('Wrong above_or_below input')
+        drop_index = set(df[df[feature] < threshold].index)
 
     # get index of df without outliers
     new_index = list(set(df.index) - set(drop_index))
@@ -98,27 +112,31 @@ def calculate_feature_bucked(df, feature, top_x):
     return df
 
 
-def data_processing(df, config):
+def pre_training_data_processing(df, config):
     # retrieve outliers_to_be_removed from config file
     outliers_to_be_removed = ast.literal_eval(config["DataProcessing"]["outliers_to_be_removed"])
 
     # retrieve features_to_bucket from config file
     features_to_bucket = ast.literal_eval(config["DataProcessing"]["features_to_bucket"])
 
+    # retrieve cols_to_drop from config file
+    cols_to_drop = ast.literal_eval(config["DataProcessing"]["cols_to_drop"])
+
+    # retrieve numeric features to convert to categorical from config file
+    numeric_to_category = ast.literal_eval(config["DataProcessing"]["numeric_to_category"])
+
     # remove outliers
-    for feature, values in outliers_to_be_removed.items():
-        df = remove_outliers(df, feature, values['threshold'], values['above_or_below'])
+    for feature, value in outliers_to_be_removed.items():
+        df = remove_outliers(df, feature, value['threshold'], value['is_above'])
 
     # convert categorical features to buckets
-    for k, v in features_to_bucket.items():
-        df = calculate_feature_bucked(df, k, v)
+    for feature, bucket in features_to_bucket.items():
+        df = calculate_feature_bucked(df, feature, bucket)
 
     # drop columns
-    col_to_drop = []
-    df = df.drop(col_to_drop, axis=1)
+    df = df.drop(cols_to_drop, axis=1)
 
     # convert numeric features to category
-    numeric_to_category = []
     for feature in numeric_to_category:
         df[feature] = df[feature].astype(object)
 
@@ -140,11 +158,12 @@ def data_split(df):
 # MODELS EVALUATION #
 
 def model_performance(eval_model, model_object, X_test, y_test):
+
     # predict with the model
     y_pred = model_object.predict(X_test)
 
     if eval_model == xgb.XGBRegressor:
-        
+
         # regression model scoring
         rmse = mean_squared_error(y_test, y_pred, squared=False)
         r2 = r2_score(y_test, y_pred)
@@ -156,7 +175,7 @@ def model_performance(eval_model, model_object, X_test, y_test):
         return regression_res
 
     else:
-        
+
         # classification model scoring
         precision = precision_score(y_test, y_pred)
         recall = recall_score(y_test, y_pred)
@@ -180,7 +199,7 @@ def objective(trial, eval_model, param, score_func, X_train, y_train, X_test, y_
     # hyperparameters to be tuned
     hyperparameters_candidates = {
         "max_depth": trial.suggest_int("max_depth", 4, 12),
-        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.05),
+        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.1),
         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.2, 0.6),
         "subsample": trial.suggest_float("subsample", 0.4, 0.8),
         "alpha": trial.suggest_float("alpha", 0.01, 10.0),
@@ -221,71 +240,16 @@ def callback(study, trial):
         study.set_user_attr(key="best_model", value=trial.user_attrs["model"])
 
 
-# LOSS FUNCTIONS #
-
-class AveragePrecisionScore:
-    def __init__(self, y_test, direction):
-        self.y_test = y_test
-        self.direction = direction
-        self.name = "average_precision_score"
-
-    def score(self, y_pred):
-        return average_precision_score(self.y_test, y_pred)
-
-class F1Score:
-    def __init__(self, y_test, beta_value, direction):
-        self.y_test = y_test
-        self.beta_value = 1.0
-        self.direction = direction
-        self.name = "f1_score"
-
-    def score(self, y_pred):
-        return fbeta_score(self.y_test, y_pred, beta=self.beta_value)
-
-class RecallScore:
-    def __init__(self, y_test, beta_value, direction):
-        self.y_test = y_test
-        self.beta_value = 2.0
-        self.direction = direction
-        self.name = "recall_score"
-
-    def score(self, y_pred):
-        return fbeta_score(self.y_test, y_pred, beta=self.beta_value)
-
-class PrecisionScore:
-    def __init__(self, y_test, beta_value, direction):
-        self.y_test = y_test
-        self.beta_value = 0.5
-        self.direction = direction
-        self.name = "precision_score"
-
-    def score(self, y_pred):
-        return fbeta_score(self.y_test, y_pred, beta=self.beta_value)
-
-class LogLoss:
-    def __init__(self, y_test, direction):
-        self.y_test = y_test
-        self.direction = direction
-        self.name = "log_loss"
-
-    def score(self, y_pred):
-        return log_loss(self.y_test, y_pred)
-
-
-class RMSE:
-    def __init__(self, y_test, squared, direction):
-        self.y_test = y_test
-        self.squared = False
-        self.direction = direction
-        self.name = "mean_squared_error"
-
-    def score(self, y_pred):
-        return mean_squared_error(self.y_test, y_pred, squared=self.squared)
-
-
 # MODEL CREATION FUNCTIONS #
 
-def tune_models_hyperparams(eval_model, param, X_train, y_train, X_test, y_test):
+def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config):
+    # retrieve param from config file
+    param = ast.literal_eval(config["ModelParameters"]["param"])
+    param["missing"] = np.nan  # whenever a null value is encountered it is treated as missing value
+
+    # retrieve n_trials from config file
+    n_trials = int(config["ModelParameters"]["n_trials"])
+
     # dictionary for saving models
     grid = {}
 
@@ -307,7 +271,7 @@ def tune_models_hyperparams(eval_model, param, X_train, y_train, X_test, y_test)
 
     for score_obj in scoring_objects:
         # create a study object to set the direction of optimization and the sampler
-        study = optuna.create_study(sampler=sampler, direction=score_obj.direction)
+        study = optuna.create_study(sampler=sampler, direction=score_obj.direction, storage="sqlite:///acceptance.db")
 
         # run the study object
         study.optimize(lambda trial: objective(trial,
@@ -318,11 +282,14 @@ def tune_models_hyperparams(eval_model, param, X_train, y_train, X_test, y_test)
                                                y_train,
                                                X_test,
                                                y_test),  # make smart guesses where the best values hyperparameters
-                       n_trials=1500,  # try hyperparameters combinations n_trials times
-                       callbacks=[callback])  # callback save the best model
+                       n_trials=n_trials,  # try hyperparameters combinations n_trials times
+                       callbacks=[callback],  # callback save the best model
+                       gc_after_trial=True)  # garbage collector
 
         # name the best model
-        model_name = "regressor_model_" + score_obj.name if eval_model == xgb.XGBRegressor else "classifier_model_" + score_obj.name
+        model_name = "regressor_model_" + score_obj.name \
+            if eval_model == xgb.XGBRegressor \
+            else "classifier_model_" + score_obj.name
         grid[model_name] = {}
 
         # initiate best model
@@ -346,57 +313,68 @@ def print_grid_results(grid):
 def get_best_models(eval_model, grid):
 
     if eval_model == xgb.XGBRegressor:
-        # filter models with negative R^2 (models worse than a constant function that predicts the mean of the data)
-        filtered_models_grid = {k: v for k, v in grid.items() if v["model_scores"]['R2'] > 0}
+        # filter out models with negative R2 (models worse than a constant function that predicts the mean of the data)
+        filtered_models_grid = {model_name: model_data for model_name, model_data in grid.items()
+                                if model_data["model_scores"]['R2'] > 0}
 
         # return best models
         if bool(filtered_models_grid):
             min_log_loss_model = min(filtered_models_grid.values(), key=lambda x: x["model_scores"]['Log Loss'])
             min_log_loss_value = min_log_loss_model["model_scores"]['Log Loss']
-            best_models_grid = {k: v for k, v in filtered_models_grid.items() if v["model_scores"]['Log Loss'] == min_log_loss_value}
+            best_models_grid = {model_name: model_data for model_name, model_data in filtered_models_grid.items()
+                                if model_data["model_scores"]['Log Loss'] == min_log_loss_value}
             return best_models_grid
         else:
-            raise ValueError("\033[1m" + 'No model has fitted the data well.' + "\033[0m")
+            raise ValueError("No model has fitted the data well")
 
     else:
         # filter models with precision<10%
-        best_models_grid = {k: v for k, v in grid.items() if v["model_scores"]['Precision'] > 0.1}
+        best_models_grid = {model_name: model_data for model_name, model_data in grid.items()
+                            if model_data["model_scores"]['Precision'] > 0.1}
 
         # return best models
         if bool(best_models_grid):
             return best_models_grid
         else:
-            raise ValueError("\033[1m" + 'No model has fitted the data well.' + "\033[0m")
+            raise ValueError("No model has fitted the data well")
 
 
-def save_best_model_in_gcs_bucket(best_models_grid, config):
+def generate_model_file_name(best_model_name):
+    model_file_name = str(best_model_name) + "_" + str(datetime.now().strftime("%Y%m%d_%H%M")) + ".pkl"
+
+    return model_file_name
+
+
+def create_model_pickle_file(model_file_path, best_model_data):
+    # open (and close) a file where we store the best model
+    with open(model_file_path, 'wb') as f:
+        # dump best model to the file
+        pickle.dump(best_model_data["model_object"], f)
+
+    return model_file_path
+
+
+def upload_to_gcs(model_file_path, config):
     # retrieve bucket_name from config file
-    bucket_name = ast.literal_eval(config["GCS"]["bucket_name"])
+    bucket_name = config["GCS"]["bucket_name"]
 
-    # save best models
-    for best_model_item in best_models_grid.items():
-
-        # retrieve best models data
-        best_model_name = best_model_item[0]
-        best_model_object = best_model_item[1]["model_object"]
-
-        # open (and close) a file where we store the best model
-        filename = str(best_model_name) + "_" + str(datetime.now().strftime("%Y%m%d_%H%M")) + ".pkl"
-        with open(filename, 'wb') as f:
-            # dump best model to the file
-            pickle.dump(best_model_object, f)
-
-        # take that file and upload into GCS
-        wi_credentials = compute_engine.Credentials()
-        storage_client = storage.Client(credentials=wi_credentials)
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(filename)
-        blob.upload_from_filename(filename)
+    # take that file and upload into GCS
+    wi_credentials = compute_engine.Credentials()
+    storage_client = storage.Client(credentials=wi_credentials)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(model_file_path)
+    blob.upload_from_filename(model_file_path)
 
 
 # EXECUTION FUNCTIONS #
 
 def main():
+    # # check if we are running in a container and set memory limits appropriately
+    # if os.path.isfile('/sys/fs/cgroup/memory/memory.limit_in_bytes'):
+    #     with open('/sys/fs/cgroup/memory/memory.limit_in_bytes') as limit:
+    #         mem = int(limit.read())
+    #         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
+
     # # allow GPU memory allocation
     # tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
@@ -407,39 +385,41 @@ def main():
     # connect redshift
     cur = connect_redshift(config)
 
-    # load data from redshift
-    df = load_data(cur, config)
+    # load data from redshift and reduce its memory usage
+    df = reduce_memory_usage(load_data(cur, config))
 
     # data processing
-    df = data_processing(df, config)
+    df = pre_training_data_processing(df, config)
 
     # data split
     X_train, X_test, y_train, y_test = data_split(df)
 
-    # define model to pass
-    eval_model = xgb.XGBClassifier
+    # delete unnecessary objects from memory
+    # objects_to_delete = [df, X, y]
+    # for obj in objects_to_delete:
+    #     del obj
+    del df
+
+    # define model type
+    eval_model = xgb.XGBClassifier if config["ModelParameters"]["model_type"] == "CLASSIFIER" else xgb.XGBRegressor
 
     # save models in a dictionary
-    param = {"objective": "binary:logistic",  # logistic regression for binary classification, output probability
-             "missing": np.nan,  # whenever a null values is encountered it is treated as missing value
-             "seed": 42,  # used to generate the folds
-             # "tree_method": "gpu_hist",  # speed up processing by using gpu power
-             "early_stopping_rounds": 50,  # overfitting prevention, stop early if no improvement in learning
-             "eval_metric": "aucpr",  # evaluation metric for validation data
-             "n_estimators": 10000  # number of trees
-             }
-    grid = tune_models_hyperparams(eval_model, param, X_train, y_train, X_test, y_test)
+    grid = tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config)
 
     # print models
     print_grid_results(grid)
 
-    # extract best model
+    # extract best models
     best_models_grid = get_best_models(eval_model, grid)
 
     # save best model in a pickle file and upload to gcs bucket
-    save_best_model_in_gcs_bucket(best_models_grid, config)
+    for best_model_name, best_model_data in best_models_grid.items():
+        model_file_path = generate_model_file_name(best_model_name)
+        create_model_pickle_file(model_file_path, best_model_data)
+        # upload_to_gcs(model_file_path, config)
 
 
 # RUN #
 
-main()
+if __name__ == "__main__":
+    main()
