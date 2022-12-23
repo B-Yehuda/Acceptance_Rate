@@ -61,10 +61,15 @@ def reduce_memory_usage(df):
     # reduce memory usage of Python objects
     for col in df.columns:
         if df[col].dtypes == np.int64:
-            df[col] = df[col].astype(int)
+            if df[col].min()>=-128 and df[col].max()<=127:
+                df[col] = df[col].astype('int8')
+            elif df[col].min()>=-32768 and df[col].max()<=32767:
+                df[col] = df[col].astype('int16')
+            else:
+                df[col] = df[col].astype(int)
         elif df[col].dtypes == np.float64:
             df[col] = df[col].astype('float32')
-
+        
     return df
 
 
