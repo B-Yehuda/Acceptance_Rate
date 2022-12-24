@@ -1,4 +1,5 @@
 import os
+from os import path
 # import resource
 import ast
 import configparser
@@ -404,8 +405,6 @@ def rename_model_pickle_file(new_model_file_path, best_model_data):
 
     src = best_model_data["model_file_path"]
 
-    from os import path
-
     # make a duplicate of an existing file
     if path.exists(src):
         # get the path to the file in the current directory
@@ -476,13 +475,12 @@ def main():
     for best_model_name, best_model_data in best_models_grid.items():
         new_model_file_path = generate_model_file_name(best_model_name)
         rename_model_pickle_file(new_model_file_path, best_model_data)
-
-        # DELETE ALL MODELS BESIDES THOSE IN best_models_grid.items()
-
         # upload_to_gcs(model_file_path, config)
+        # DELETE ALL MODELS BESIDES THOSE IN best_models_grid.items()
 
 
 # RUN #
 
 if __name__ == "__main__":
     main()
+    
