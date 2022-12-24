@@ -261,7 +261,7 @@ def callback(study, trial):
     file_prefix = f"{trial.user_attrs.get('model_name', -1)}_{trial.user_attrs.get('score_name', -1)}"
     best_model_file_path = f"{file_prefix}_{study.best_trial.number}.pkl"
 
-    # DELETE CONDITION REGARDLESS  BECAUSE WHEN 0-2500 --> 0 IS THE BEST ---> 2499 WILL BE SAVED
+    # DELETE CONDITION REGARDLESS  BECAUSE WHEN 0-2500 --> 2500 IS THE BEST ---> 2500 WILL BE SAVED
     # if study.best_trial.number != trial.number:
     model_files_to_delete = [f for f in os.listdir('.') if os.path.isfile(f) and f.startswith(file_prefix) and f != best_model_file_path]
     for f in model_files_to_delete:
@@ -339,7 +339,7 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
             else "classifier_model_" + score_obj.name
         grid[model_name] = {}
 
-        # retrieve path to the best (saved) model (i.e. the only one that wasn't deleted by callback)
+        # save path of the best (saved) model (i.e. the only one that wasn't deleted by callback)
         model_file_path = f"{model_name}_{study.best_trial.number}.pkl"
         grid[model_name]["model_file_path"] = model_file_path
 
@@ -403,6 +403,7 @@ def rename_model_pickle_file(new_model_file_path, best_model_data):
     #     # dump best model to the file
     #     pickle.dump(best_model_data["model_object"], f)
 
+    # retrieve best model path
     src = best_model_data["model_file_path"]
 
     # make a duplicate of an existing file
@@ -412,8 +413,6 @@ def rename_model_pickle_file(new_model_file_path, best_model_data):
 
         # rename the original file
         os.rename(src, new_model_file_path)
-
-    return src
 
 
 def upload_to_gcs(model_file_path, config):
@@ -471,11 +470,12 @@ def main():
     # extract best models
     best_models_grid = get_best_models(eval_model, grid)
 
-    # save best model in a pickle file and upload to gcs bucket
+    # rename best model pickle file and upload to gcs bucket
     for best_model_name, best_model_data in best_models_grid.items():
         new_model_file_path = generate_model_file_name(best_model_name)
         rename_model_pickle_file(new_model_file_path, best_model_data)
         # upload_to_gcs(model_file_path, config)
+        
         # DELETE ALL MODELS BESIDES THOSE IN best_models_grid.items()
 
 
@@ -483,4 +483,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
