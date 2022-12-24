@@ -1,4 +1,4 @@
-# import os
+import os
 # import resource
 import ast
 import configparser
@@ -16,6 +16,7 @@ import optuna
 from optuna.samplers import TPESampler
 from google.cloud import storage
 from google.auth import compute_engine
+# tf.config.list_physical_devices('GPU')
 
 
 # IMPORT DATA #
@@ -61,15 +62,10 @@ def reduce_memory_usage(df):
     # reduce memory usage of Python objects
     for col in df.columns:
         if df[col].dtypes == np.int64:
-            if df[col].min()>=-128 and df[col].max()<=127:
-                df[col] = df[col].astype('int8')
-            elif df[col].min()>=-32768 and df[col].max()<=32767:
-                df[col] = df[col].astype('int16')
-            else:
-                df[col] = df[col].astype(int)
+            df[col] = df[col].astype(int)
         elif df[col].dtypes == np.float64:
             df[col] = df[col].astype('float32')
-        
+
     return df
 
 
@@ -198,7 +194,7 @@ def model_performance(eval_model, model_object, X_test, y_test):
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
-def objective(trial, eval_model, param, score_func, X_train, y_train, X_test, y_test):
+def objective(trial, eval_model, param, score_func, score_name, X_train, y_train, X_test, y_test):
     # create objective function which evaluate model performance based on the hyperparameters combination
 
     # hyperparameters to be tuned
@@ -227,8 +223,23 @@ def objective(trial, eval_model, param, score_func, X_train, y_train, X_test, y_
                    eval_set=[(X_test, y_test)],
                    callbacks=[pruning_callback])
 
-    # tag each trial with keyword
-    trial.set_user_attr(key="model", value=xgb_optuna)
+    # # tag each trial with keyword
+    # trial.set_user_attr(key="model", value=xgb_optuna)
+
+    # for each trial - create naming convention
+    model_name = "regressor_model" if eval_model == xgb.XGBRegressor else "classifier_model"
+
+    # tag each trial - with its naming convention
+    trial.set_user_attr(key="model_name", value=model_name)
+    trial.set_user_attr(key="score_name", value=score_name)
+
+    # for each model object - create a path based on the trial tag
+    model_file_path = f"{trial.user_attrs['model_name']}_{trial.user_attrs['score_name']}_{trial.number}.pkl"
+
+    # open (and close) a file where we store each model object
+    with open(model_file_path, 'wb') as f:
+        # dump best model to the file
+        pickle.dump(xgb_optuna, f)
 
     # predict with the model
     y_pred = xgb_optuna.predict(X_test)
@@ -239,10 +250,21 @@ def objective(trial, eval_model, param, score_func, X_train, y_train, X_test, y_
     return score
 
 
+# def callback(study, trial):
+#     # create a callback function to retrieve the best model (i.e. the model with the best hyperparameters)
+#     if study.best_trial.number == trial.number:
+#         study.set_user_attr(key="best_model", value=trial.user_attrs["model"])
+
+
 def callback(study, trial):
-    # create a callback function to retrieve the best model (i.e. the model with the best hyperparameters)
-    if study.best_trial.number == trial.number:
-        study.set_user_attr(key="best_model", value=trial.user_attrs["model"])
+    file_prefix = f"{trial.user_attrs.get('model_name', -1)}_{trial.user_attrs.get('score_name', -1)}"
+    best_model_file_path = f"{file_prefix}_{study.best_trial.number}.pkl"
+
+    # DELETE CONDITION REGARDLESS  BECAUSE WHEN 0-2500 --> 0 IS THE BEST ---> 2499 WILL BE SAVED
+    # if study.best_trial.number != trial.number:
+    model_files_to_delete = [f for f in os.listdir('.') if os.path.isfile(f) and f.startswith(file_prefix) and f != best_model_file_path]
+    for f in model_files_to_delete:
+        os.remove(f)
 
 
 # MODEL CREATION FUNCTIONS #
@@ -278,13 +300,14 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
         # create a study object to set the direction of optimization and the sampler
         study = optuna.create_study(sampler=sampler,
                                     direction=score_obj.direction,
-                                    storage="sqlite:///acceptance.db")
+                                    storage="sqlite:///study_state.db")
 
         # run the study object
         study.optimize(lambda trial: objective(trial,
                                                eval_model,
                                                param,
                                                score_obj.score,
+                                               score_obj.name,
                                                X_train,
                                                y_train,
                                                X_test,
@@ -293,14 +316,35 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
                        callbacks=[callback],  # callback save the best model
                        gc_after_trial=True)  # garbage collector
 
+        #     # name the best model
+        #     model_name = "regressor_model_" + score_obj.name \
+        #         if eval_model == xgb.XGBRegressor \
+        #         else "classifier_model_" + score_obj.name
+        #     grid[model_name] = {}
+        #
+        #     # initiate best model
+        #     model_object = study.user_attrs["best_model"]
+        #     grid[model_name]["model_object"] = model_object
+        #
+        #     # score best model
+        #     model_scores = model_performance(eval_model, model_object, X_test, y_test)
+        #     grid[model_name]["model_scores"] = model_scores
+        #
+        # return grid
+
         # name the best model
         model_name = "regressor_model_" + score_obj.name \
             if eval_model == xgb.XGBRegressor \
             else "classifier_model_" + score_obj.name
         grid[model_name] = {}
 
+        # retrieve path to the best (saved) model (i.e. the only one that wasn't deleted by callback)
+        model_file_path = f"{model_name}_{study.best_trial.number}.pkl"
+        grid[model_name]["model_file_path"] = model_file_path
+
         # initiate best model
-        model_object = study.user_attrs["best_model"]
+        with open(model_file_path, 'rb') as f:
+            model_object = pickle.load(f)
         grid[model_name]["model_object"] = model_object
 
         # score best model
@@ -347,18 +391,30 @@ def get_best_models(eval_model, grid):
 
 
 def generate_model_file_name(best_model_name):
-    model_file_name = str(best_model_name) + "_" + str(datetime.now().strftime("%Y%m%d_%H%M")) + ".pkl"
+    new_model_file_path = str(best_model_name) + "_" + str(datetime.now().strftime("%Y%m%d_%H%M")) + ".pkl"
 
-    return model_file_name
+    return new_model_file_path
 
 
-def create_model_pickle_file(model_file_path, best_model_data):
-    # open (and close) a file where we store the best model
-    with open(model_file_path, 'wb') as f:
-        # dump best model to the file
-        pickle.dump(best_model_data["model_object"], f)
+def rename_model_pickle_file(new_model_file_path, best_model_data):
+    # # open (and close) a file where we store the best model
+    # with open(model_file_path, 'wb') as f:
+    #     # dump best model to the file
+    #     pickle.dump(best_model_data["model_object"], f)
 
-    return model_file_path
+    src = best_model_data["model_file_path"]
+
+    from os import path
+
+    # make a duplicate of an existing file
+    if path.exists(src):
+        # get the path to the file in the current directory
+        src = path.realpath(src);
+
+        # rename the original file
+        os.rename(src, new_model_file_path)
+
+    return src
 
 
 def upload_to_gcs(model_file_path, config):
@@ -382,7 +438,7 @@ def main():
     #         mem = int(limit.read())
     #         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
 
-    # # allow GPU memory allocation
+    # allow GPU memory allocation
     # tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
     # read from config file
@@ -418,8 +474,11 @@ def main():
 
     # save best model in a pickle file and upload to gcs bucket
     for best_model_name, best_model_data in best_models_grid.items():
-        model_file_path = generate_model_file_name(best_model_name)
-        create_model_pickle_file(model_file_path, best_model_data)
+        new_model_file_path = generate_model_file_name(best_model_name)
+        rename_model_pickle_file(new_model_file_path, best_model_data)
+
+        # DELETE ALL MODELS BESIDES THOSE IN best_models_grid.items()
+
         # upload_to_gcs(model_file_path, config)
 
 
