@@ -15,8 +15,6 @@ from optuna.samplers import TPESampler
 from google.cloud import storage
 from google.auth import compute_engine
 # import resource
-# import tensorflow as tf
-# tf.config.list_physical_devices('GPU')
 
 
 # IMPORT DATA #
@@ -221,7 +219,7 @@ def model_performance(eval_model, model_object, X_test, y_test):
 
         return regression_res
 
-    else:
+    elif eval_model == xgb.XGBClassifier:
 
         # classification model scoring
         precision = precision_score(y_test, y_pred)
@@ -311,26 +309,41 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
     # retrieve n_trials from config file
     n_trials = int(config["Model_Parameters"]["n_trials"])
 
+    # retrieve Scoring_Functions values from config file
+    regressor_scoring_functions = ast.literal_eval(config["Scoring_Functions"]["regressor_scoring_functions"])
+    classifier_scoring_functions = ast.literal_eval(config["Scoring_Functions"]["classifier_scoring_functions"])
+
+    # dictionary for saving the scoring_functions
+    scoring_functions = {}
+
     # dictionary for saving the best models
     grid = {}
 
     # define scoring method
     if eval_model == xgb.XGBRegressor:
-        scoring_objects = [AveragePrecisionScore(y_test, direction="maximize"),
-                           LogLoss(y_test, direction="minimize"),
-                           RMSE(y_test, squared=False, direction="minimize")
-                           ]
-    else:
-        scoring_objects = [AveragePrecisionScore(y_test, direction="maximize"),
-                           F1Score(y_test, beta_value=1.0, direction="maximize"),
-                           RecallScore(y_test, beta_value=2.0, direction="maximize"),
-                           PrecisionScore(y_test, beta_value=0.5, direction="maximize")
-                           ]
+        for reg_score_obj in regressor_scoring_functions:
+            if reg_score_obj == "AveragePrecisionScore":
+                scoring_functions[reg_score_obj] = AveragePrecisionScore(y_test, direction="maximize")
+            elif reg_score_obj == "LogLoss":
+                scoring_functions[reg_score_obj] = LogLoss(y_test, direction="minimize")
+            elif reg_score_obj == "RMSE":
+                scoring_functions[reg_score_obj] = RMSE(y_test, squared=False, direction="minimize")
+
+    elif eval_model == xgb.XGBClassifier:
+        for clf_score_obj in classifier_scoring_functions:
+            if clf_score_obj == "AveragePrecisionScore":
+                scoring_functions[clf_score_obj] = AveragePrecisionScore(y_test, direction="maximize")
+            elif clf_score_obj == "F1Score":
+                scoring_functions[clf_score_obj] = F1Score(y_test, beta_value=1.0, direction="maximize")
+            elif clf_score_obj == "RecallScore":
+                scoring_functions[clf_score_obj] = RecallScore(y_test, beta_value=2.0, direction="maximize")
+            elif clf_score_obj == "PrecisionScore":
+                scoring_functions[clf_score_obj] = PrecisionScore(y_test, beta_value=0.5, direction="maximize")
 
     # create a sampler object to find more efficiently the best hyperparameters
     sampler = TPESampler()  # by default the sampler = TPESampler()
 
-    for score_obj in scoring_objects:
+    for score_obj in scoring_functions.values():
         # create a study object to set the direction of optimization and the sampler
         study = optuna.create_study(sampler=sampler,
                                     direction=score_obj.direction,
@@ -380,47 +393,33 @@ def print_grid_results(grid):
 
 
 def get_best_models(eval_model, grid, config):
-    # retrieve Scoring_Functions_Filters values from config file
-    r2_filter = float(config["Scoring_Functions_Filters"]["r2_filter"])
-    precision_filter = float(config["Scoring_Functions_Filters"]["precision_filter"])
+    # retrieve Scoring_Functions filters from config file
+    r2_filter = float(config["Scoring_Functions"]["r2_filter"])
+    precision_filter = float(config["Scoring_Functions"]["precision_filter"])
 
     if eval_model == xgb.XGBRegressor:
         # filter out models with negative R2 (models worse than a constant function that predicts the mean of the data)
         filtered_models_grid = {model_name: model_data for model_name, model_data in grid.items()
                                 if model_data["model_scores"]['R2'] > r2_filter}
 
+        best_models_grid = {}
         # return best models and delete the rest
-        if bool(filtered_models_grid):
+        if filtered_models_grid:
             min_log_loss_model = min(filtered_models_grid.values(), key=lambda x: x["model_scores"]['Log Loss'])
             min_log_loss_value = min_log_loss_model["model_scores"]['Log Loss']
             best_models_grid = {model_name: model_data for model_name, model_data in filtered_models_grid.items()
                                 if model_data["model_scores"]['Log Loss'] == min_log_loss_value}
-            # delete non-best models
-            for model_data in grid.values():
-                if model_data not in best_models_grid.values():
-                    model_path_to_delete = model_data["model_file_path"]
-                    os.remove(model_path_to_delete)
-            # return best models
-            return best_models_grid
-        else:
-            raise ValueError("No model has fitted the data well")
 
-    else:
+        # return best models
+        return best_models_grid
+
+    elif eval_model == xgb.XGBClassifier:
         # filter out models with precision<10%
         best_models_grid = {model_name: model_data for model_name, model_data in grid.items()
                             if model_data["model_scores"]['Precision'] > precision_filter}
 
-        # return best models and delete the rest
-        if bool(best_models_grid):
-            # delete non-best models
-            for model_data in grid.values():
-                if model_data not in best_models_grid.values():
-                    model_path_to_delete = model_data["model_file_path"]
-                    os.remove(model_path_to_delete)
-            # return best models
-            return best_models_grid
-        else:
-            raise ValueError("No model has fitted the data well")
+        # return best models
+        return best_models_grid
 
 
 def generate_model_file_name(best_model_name):
@@ -451,19 +450,12 @@ def upload_to_gcs(new_model_file_path, config):
 
 # EXECUTION FUNCTIONS #
 
-def main():
+def main(config):
     # # check if we are running in a container and set memory limits appropriately
     # if os.path.isfile('/sys/fs/cgroup/memory/memory.limit_in_bytes'):
     #     with open('/sys/fs/cgroup/memory/memory.limit_in_bytes') as limit:
     #         mem = int(limit.read())
     #         resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
-
-    # allow GPU memory allocation
-    # tf.compat.v1.GPUOptions(per_process_gpu_memory_fraction=0.9)
-
-    # read from config file
-    config = configparser.ConfigParser()
-    config.read("config.ini")
 
     # connect redshift
     cur = connect_redshift(config)
@@ -491,6 +483,8 @@ def main():
 
     # extract best models
     best_models_grid = get_best_models(eval_model, grid, config)
+    if not best_models_grid:
+        raise ValueError("No model has fitted the data well")
 
     # rename best model pkl file and upload it to gcs bucket
     for best_model_name, best_model_data in best_models_grid.items():
@@ -502,4 +496,7 @@ def main():
 # RUN #
 
 if __name__ == "__main__":
-    main()
+    # read from config file
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    main(config)
