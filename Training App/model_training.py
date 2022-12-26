@@ -14,6 +14,7 @@ import optuna
 from optuna.samplers import TPESampler
 from google.cloud import storage
 from google.auth import compute_engine
+from datetime import datetime
 # import resource
 
 
@@ -38,6 +39,7 @@ def connect_redshift(config):
 
 
 def load_data(cur, config):
+    print(f"Loading data from Redshift - started at: \033[1m{datetime.now()}\033[0m")
     # retrieve query from config file
     query = config["Redshift_Data"]["query"]
 
@@ -47,6 +49,7 @@ def load_data(cur, config):
     # frame the data
     df = pd.DataFrame(cur.fetchall())
     df.columns = [desc[0] for desc in cur.description]
+    print(f"Loading data from Redshift - finished at: \033[1m{datetime.now()}\033[0m")
 
     return df
 
@@ -297,6 +300,7 @@ def callback(study, trial):
     model_files_to_delete = [f for f in os.listdir('.') if os.path.isfile(f) and f.startswith(file_prefix) and f != best_model_file_path]
     for f in model_files_to_delete:
         os.remove(f)
+    print(f"Optuna {trial.user_attrs.get('model_name', -1)} trial number {trial.number} - finished at: \033[1m{datetime.now()}\033[0m")
 
 
 # MODEL CREATION FUNCTIONS #
@@ -328,6 +332,8 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
                 scoring_functions[reg_score_obj] = LogLoss(y_test, direction="minimize")
             elif reg_score_obj == "RMSE":
                 scoring_functions[reg_score_obj] = RMSE(y_test, squared=False, direction="minimize")
+            else:
+                raise ValueError("\033[1m regressor_scoring_functions object was not defined correctly in the config file \033[0m")
 
     elif eval_model == xgb.XGBClassifier:
         for clf_score_obj in classifier_scoring_functions:
@@ -339,6 +345,8 @@ def tune_models_hyperparams(eval_model, X_train, y_train, X_test, y_test, config
                 scoring_functions[clf_score_obj] = RecallScore(y_test, beta_value=2.0, direction="maximize")
             elif clf_score_obj == "PrecisionScore":
                 scoring_functions[clf_score_obj] = PrecisionScore(y_test, beta_value=0.5, direction="maximize")
+            else:
+                raise ValueError("\033[1m classifier_scoring_functions object was not defined correctly in the config file \033[0m")
 
     # create a sampler object to find more efficiently the best hyperparameters
     sampler = TPESampler()  # by default the sampler = TPESampler()
@@ -451,6 +459,7 @@ def upload_to_gcs(new_model_file_path, config):
 # EXECUTION FUNCTIONS #
 
 def main(config):
+    print(f"Main function - started at: \033[1m{datetime.now()}\033[0m")
     # # check if we are running in a container and set memory limits appropriately
     # if os.path.isfile('/sys/fs/cgroup/memory/memory.limit_in_bytes'):
     #     with open('/sys/fs/cgroup/memory/memory.limit_in_bytes') as limit:
@@ -484,13 +493,13 @@ def main(config):
     # extract best models
     best_models_grid = get_best_models(eval_model, grid, config)
     if not best_models_grid:
-        raise ValueError("No model has fitted the data well")
+        raise ValueError("\033[1m No model has fitted the data well \033[0m")
 
     # rename best model pkl file and upload it to gcs bucket
     for best_model_name, best_model_data in best_models_grid.items():
         new_model_file_path = generate_model_file_name(best_model_name)
         rename_model_pickle_file(new_model_file_path, best_model_data)
-        upload_to_gcs(new_model_file_path, config)
+        # upload_to_gcs(new_model_file_path, config)
 
 
 # RUN #
