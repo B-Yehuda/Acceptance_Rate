@@ -435,12 +435,14 @@ def get_best_models(eval_model, grid, config):
     r2_filter = float(config["Scoring_Functions"]["r2_filter"])
     precision_filter = float(config["Scoring_Functions"]["precision_filter"])
 
+    # dictionary for saving the filtered best models
+    best_models_grid = {}
+
     if eval_model == xgb.XGBRegressor:
         # filter out models with negative R2 (models worse than a constant function that predicts the mean of the data)
         filtered_models_grid = {model_name: model_data for model_name, model_data in grid.items()
                                 if model_data["model_scores"]['R2'] > r2_filter}
 
-        best_models_grid = {}
         # return best models and delete the rest
         if filtered_models_grid:
             min_log_loss_model = min(filtered_models_grid.values(), key=lambda x: x["model_scores"]['Log Loss'])
@@ -448,16 +450,13 @@ def get_best_models(eval_model, grid, config):
             best_models_grid = {model_name: model_data for model_name, model_data in filtered_models_grid.items()
                                 if model_data["model_scores"]['Log Loss'] == min_log_loss_value}
 
-        # return best models
-        return best_models_grid
-
     elif eval_model == xgb.XGBClassifier:
         # filter out models with precision<10%
         best_models_grid = {model_name: model_data for model_name, model_data in grid.items()
                             if model_data["model_scores"]['Precision'] > precision_filter}
 
-        # return best models
-        return best_models_grid
+    # return best models
+    return best_models_grid
 
 
 def generate_model_file_name(best_model_name):
