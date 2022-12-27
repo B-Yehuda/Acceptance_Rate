@@ -39,17 +39,47 @@ def connect_redshift(config):
 
 
 def load_data(cur, config):
-    print(f"Loading data from Redshift - started at: \033[1m{datetime.now()}\033[0m")
-    # retrieve query from config file
-    query = config["Redshift_Data"]["query"]
+    # retrieve file name from config file
+    filename = config["Dataset"]["filename"]
 
-    # load data
-    cur.execute(query)
+    # retrieve data set location from config file
+    location = config["Dataset"]["location"]
 
-    # frame the data
-    df = pd.DataFrame(cur.fetchall())
-    df.columns = [desc[0] for desc in cur.description]
-    print(f"Loading data from Redshift - finished at: \033[1m{datetime.now()}\033[0m")
+    if location == "REDSHIFT":
+        print(f"Loading data from REDSHIFT - started at: \033[1m{datetime.now()}\033[0m")
+        # retrieve query from config file
+        query = config["Redshift_Data"]["query"]
+        # execute query
+        cur.execute(query)
+        # load the dataset from redshift
+        data = cur.fetchall()
+        print(f"Loading data from REDSHIFT - finished at: \033[1m{datetime.now()}\033[0m")
+        # frame the dataset
+        df = pd.DataFrame(data)
+        df.columns = [desc[0] for desc in cur.description]
+        print(f"Framing the data - finished at: \033[1m{datetime.now()}\033[0m")
+
+    elif location == "GCS":
+        print(f"Loading data from GCS - started at: \033[1m{datetime.now()}\033[0m")
+        # retrieve ID of GCS bucket from config file
+        bucket_name = config["GCS"]["bucket_name"]
+        # load the dataset from GCS
+        wi_credentials = compute_engine.Credentials()
+        storage_client = storage.Client(credentials=wi_credentials)
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(filename)
+        blob.download_to_filename(filename)
+        df = pd.read_pickle(filename)
+        print(f"Loading data from GCS - finished at: \033[1m{datetime.now()}\033[0m")
+
+    elif location == "LOCAL":
+        print(f"Loading data from LOCAL FILE - started at: \033[1m{datetime.now()}\033[0m")
+        # load the dataset from local dir
+        df = pd.read_pickle(filename)
+        print(f"Loading data from LOCAL FILE - finished at: \033[1m{datetime.now()}\033[0m")
+
+    else:
+        raise ValueError("\033[1m No dataset location was specified in the config file \033[0m")
 
     return df
 
@@ -499,7 +529,7 @@ def main(config):
     for best_model_name, best_model_data in best_models_grid.items():
         new_model_file_path = generate_model_file_name(best_model_name)
         rename_model_pickle_file(new_model_file_path, best_model_data)
-        # upload_to_gcs(new_model_file_path, config)
+        upload_to_gcs(new_model_file_path, config)
 
 
 # RUN #
