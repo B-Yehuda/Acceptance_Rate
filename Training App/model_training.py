@@ -15,7 +15,7 @@ from optuna.samplers import TPESampler
 from google.cloud import storage
 from google.auth import compute_engine
 from datetime import datetime
-# import resource
+import gs_chunked_io as gscio
 
 
 # IMPORT DATA #
@@ -68,7 +68,10 @@ def load_data(cur, config):
         storage_client = storage.Client(credentials=wi_credentials)
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(filename)
-        blob.download_to_filename(filename)
+        # read GCS object (dataset file) in chunks
+        with open(filename, "wb") as f:
+            for chunk in gscio.for_each_chunk(blob, 25 * 1024 * 1024):
+                f.write(chunk)
         df = pd.read_pickle(filename)
         print(f"Loading data from GCS - finished at: \033[1m{datetime.now()}\033[0m")
 
@@ -86,62 +89,57 @@ def load_data(cur, config):
 
 # DATA PROCESSING #
 
-def reduce_memory_usage(df, int_cast=True, float_cast=True, obj_to_category=False):
+def reduce_memory_usage(df, int_cast=True, float_cast=False, obj_to_category=False):
     # check that the df columns are unique
     assert len(df.columns) == len(set(df.columns))
-    #
-    # """
-    # Iterate through all the columns of a dataframe and modify the data type to reduce memory usage.
-    # :param df: dataframe to reduce (pd.DataFrame)
-    # :param int_cast: indicate if columns should be tried to be casted to int (bool)
-    # :param float_cast: indicate if columns should be tried to be casted to float (bool)
-    # :param obj_to_category: convert non-datetime related objects to category dtype (bool)
-    # :return: dataset with the column dtypes adjusted (pd.DataFrame)
-    # """
-    # cols = df.columns.tolist()
-    #
-    # for col in cols:
-    #     col_type = df[col].dtypes
-    #
-    #     if col_type != object and col_type.name != 'category' and 'datetime' not in col_type.name:
-    #         c_min = df[col].min()
-    #         c_max = df[col].max()
-    #
-    #         # test column type
-    #         is_int_column = col_type == np.int64
-    #         is_float_column = col_type == np.float64
-    #
-    #         if int_cast and is_int_column:
-    #             if c_min >= np.iinfo(np.int8).min and c_max <= np.iinfo(np.int8).max:
-    #                 df[col] = df[col].astype('int8')
-    #             elif c_min >= np.iinfo(np.uint8).min and c_max <= np.iinfo(np.uint8).max:
-    #                 df[col] = df[col].astype('uint8')
-    #             elif c_min >= np.iinfo(np.int16).min and c_max <= np.iinfo(np.int16).max:
-    #                 df[col] = df[col].astype('int16')
-    #             elif c_min >= np.iinfo(np.uint16).min and c_max <= np.iinfo(np.uint16).max:
-    #                 df[col] = df[col].astype('uint16')
-    #             elif c_min >= np.iinfo(np.int32).min and c_max <= np.iinfo(np.int32).max:
-    #                 df[col] = df[col].astype('int32')
-    #             elif c_min >= np.iinfo(np.uint32).min and c_max <= np.iinfo(np.uint32).max:
-    #                 df[col] = df[col].astype('uint32')
-    #             elif c_min >= np.iinfo(np.int64).min and c_max <= np.iinfo(np.int64).max:
-    #                 df[col] = df[col].astype('int64')
-    #             elif c_min >= np.iinfo(np.uint64).min and c_max <= np.iinfo(np.uint64).max:
-    #                 df[col] = df[col].astype('uint64')
-    #         elif float_cast and is_float_column:
-    #             if c_min >= np.finfo(np.float16).min and c_max <= np.finfo(np.float16).max:
-    #                 df[col] = df[col].astype('float16')
-    #             elif c_min >= np.finfo(np.float32).min and c_max <= np.finfo(np.float32).max:
-    #                 df[col] = df[col].astype('float32')
-    #             else:
-    #                 df[col] = df[col].astype('float64')
-    #     elif 'datetime' not in col_type.name and obj_to_category:
-    #         df[col] = df[col].astype('category')
 
-    # values are being changed
-    # https://stackoverflow.com/questions/50388396/error-name-dtype-is-not-defined
-    # https://stackoverflow.com/questions/46705778/numpy-astype-from-float32-to-float16
-    # https://stackoverflow.com/questions/68294163/why-does-converting-from-np-float16-to-np-float32-modify-the-value
+    """
+    Iterate through all the columns of a dataframe and modify the data type to reduce memory usage.
+    :param df: dataframe to reduce (pd.DataFrame)
+    :param int_cast: indicate if columns should be tried to be casted to int (bool)
+    :param float_cast: indicate if columns should be tried to be casted to float (bool)
+    :param obj_to_category: convert non-datetime related objects to category dtype (bool)
+    :return: dataset with the column dtypes adjusted (pd.DataFrame)
+    """
+    cols = df.columns.tolist()
+
+    for col in cols:
+        col_type = df[col].dtypes
+
+        if col_type != object and col_type.name != 'category' and 'datetime' not in col_type.name:
+            c_min = df[col].min()
+            c_max = df[col].max()
+
+            # test column type
+            is_int_column = col_type == np.int64
+            is_float_column = col_type == np.float64
+
+            if int_cast and is_int_column:
+                if c_min >= np.iinfo(np.int8).min and c_max <= np.iinfo(np.int8).max:
+                    df[col] = df[col].astype('int8')
+                elif c_min >= np.iinfo(np.uint8).min and c_max <= np.iinfo(np.uint8).max:
+                    df[col] = df[col].astype('uint8')
+                elif c_min >= np.iinfo(np.int16).min and c_max <= np.iinfo(np.int16).max:
+                    df[col] = df[col].astype('int16')
+                elif c_min >= np.iinfo(np.uint16).min and c_max <= np.iinfo(np.uint16).max:
+                    df[col] = df[col].astype('uint16')
+                elif c_min >= np.iinfo(np.int32).min and c_max <= np.iinfo(np.int32).max:
+                    df[col] = df[col].astype('int32')
+                elif c_min >= np.iinfo(np.uint32).min and c_max <= np.iinfo(np.uint32).max:
+                    df[col] = df[col].astype('uint32')
+                elif c_min >= np.iinfo(np.int64).min and c_max <= np.iinfo(np.int64).max:
+                    df[col] = df[col].astype('int64')
+                elif c_min >= np.iinfo(np.uint64).min and c_max <= np.iinfo(np.uint64).max:
+                    df[col] = df[col].astype('uint64')
+            elif float_cast and is_float_column:
+                if c_min >= np.finfo(np.float16).min and c_max <= np.finfo(np.float16).max:
+                    df[col] = df[col].astype('float16')
+                elif c_min >= np.finfo(np.float32).min and c_max <= np.finfo(np.float32).max:
+                    df[col] = df[col].astype('float32')
+                else:
+                    df[col] = df[col].astype('float64')
+        elif 'datetime' not in col_type.name and obj_to_category:
+            df[col] = df[col].astype('category')
 
     return df
 
@@ -267,23 +265,21 @@ def model_performance(eval_model, model_object, X_test, y_test):
 
 # HYPERPARAMETERS OPTIMIZATION #
 
-# disable printing
-optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-
 def objective(trial, eval_model, param, score_func, score_name, X_train, y_train, X_test, y_test):
     # create objective function which evaluate model performance based on the hyperparameters combination
 
     # hyperparameters to be tuned
     hyperparameters_candidates = {
-        "max_depth": trial.suggest_int("max_depth", 4, 12),
+        "n_estimators": 10000,  # number of trees
+        "early_stopping_rounds": 100,  # overfitting prevention, stop early if no improvement in learning
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.1),
-        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.2, 0.6),
-        "subsample": trial.suggest_float("subsample", 0.4, 0.8),
+        "max_depth": trial.suggest_int("max_depth", 4, 12),
+        "min_child_weight": trial.suggest_float("min_child_weight", 10, 1000),
+        "subsample": trial.suggest_float("subsample", 0.4, 0.9),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.2, 1),
         "alpha": trial.suggest_float("alpha", 0.01, 10.0),
         "lambda": trial.suggest_float("lambda", 1e-8, 10.0),
         "gamma": trial.suggest_float("lambda", 1e-8, 10.0),
-        "min_child_weight": trial.suggest_float("min_child_weight", 10, 1000),
         "scale_pos_weight": trial.suggest_int('scale_pos_weight', 1, 100)
     }
 
