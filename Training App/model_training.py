@@ -53,9 +53,9 @@ def objective(trial, eval_model, param, score_func, score_name, X_train, y_train
 
     # hyperparameters to be tuned
     hyperparameters_candidates = {
-        "n_estimators": trial.suggest_int('n_estimators', 50, 10000),  # number of trees
+        "n_estimators": trial.suggest_int('n_estimators', 5000, 20000),  # number of trees
         "early_stopping_rounds": 100,  # overfitting prevention, stop early if no improvement in learning
-        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.5),  # determines how fast the XGBoost model learns
+        "learning_rate": trial.suggest_loguniform("learning_rate", 0.005, 0.5),  # determines how fast the XGBoost model learns
         "max_depth": trial.suggest_int("max_depth", 4, 20),  # maximum depth of a tree
         "min_child_weight": trial.suggest_float("min_child_weight", 10, 1000),  # minimum sum of weights of all observations required in a child
         "scale_pos_weight": trial.suggest_int('scale_pos_weight', 1, 100),  # controls the balance of positive and negative weights
@@ -281,6 +281,9 @@ def main(config):
 
     # load data from redshift and reduce its memory usage
     df = reduce_memory_usage(load_data(cur, config))
+
+    # # # save df in pkl file
+    # df.to_pickle("model_training_dataset")
 
     # data processing
     df = pre_training_data_processing(df, config)
